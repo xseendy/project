@@ -32,6 +32,7 @@ class CreditSystemApp:
         CREATE TABLE IF NOT EXISTS applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             client_id INTEGER,
+            admin_id INTEGER,
             full_name TEXT NOT NULL,
             credit_sum REAL NOT NULL,
             credit_term INTEGER NOT NULL,
@@ -41,7 +42,17 @@ class CreditSystemApp:
         )
         ''')
 
-        # Добавляем примерные данные клиентов
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS administrators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            email TEXT,
+            phone TEXT
+        )
+        ''')
+
         clients = [
             ("client1", "password1", "Иван Иванов", "ivan@example.com", "1234567890"),
             ("client2", "password2", "Петр Петров", "petr@example.com", "0987654321"),
@@ -57,19 +68,27 @@ class CreditSystemApp:
             clients
         )
 
-        # Добавляем примерные заявки
-        applications = [
-            (1, "Иван Иванов", 100000, 12, "На рассмотрении"),
-            (2, "Петр Петров", 50000, 6, "На рассмотрении"),
-            (3, "Ольга Сидорова", 150000, 24, "Одобрено"),
-            (4, "Алексей Алексеев", 200000, 36, "Не одобрено"),
-            (5, "Елена Егорова", 250000, 18, "На рассмотрении"),
-            (6, "Анастасия Смирнова", 300000, 24, "На рассмотрении"),
-            (7, "Дмитрий Кузнецов", 120000, 12, "Не одобрено"),
+        admins = [
+            ("admin", "CreditAdmin2023!", "Администратор", "admin@example.com", "1234567890"),
         ]
 
         cursor.executemany(
-            "INSERT INTO applications (client_id, full_name, credit_sum, credit_term, status) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO administrators (username, password, full_name, email, phone) VALUES (?, ?, ?, ?, ?)",
+            admins
+        )
+
+        applications = [
+            (1, None, "Иван Иванов", 100000, 12, "На рассмотрении"),
+            (2, None, "Петр Петров", 50000, 6, "На рассмотрении"),
+            (3, None, "Ольга Сидорова", 150000, 24, "Одобрено"),
+            (4, None, "Алексей Алексеев", 200000, 36, "Не одобрено"),
+            (5, None, "Елена Егорова", 250000, 18, "На рассмотрении"),
+            (6, None, "Анастасия Смирнова", 300000, 24, "На рассмотрении"),
+            (7, None, "Дмитрий Кузнецов", 120000, 12, "Не одобрено"),
+        ]
+
+        cursor.executemany(
+            "INSERT INTO applications (client_id, admin_id, full_name, credit_sum, credit_term, status) VALUES (?, ?, ?, ?, ?, ?)",
             applications
         )
 
@@ -382,8 +401,13 @@ class CreditSystemApp:
         back_button.pack(side=tk.LEFT)
 
     def admin_login(self, username, password):
-        if username == "admin" and password == "CreditAdmin2023!":
-            messagebox.showinfo("Успех", "Вы вошли как администратор.")
+        conn = sqlite3.connect('credit_system.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM administrators WHERE username = ? AND password = ?", (username, password))
+        admin = cursor.fetchone()
+        conn.close()
+
+        if admin:
             self.show_admin_dashboard()
         else:
             messagebox.showerror("Ошибка", "Неверный логин или пароль")
@@ -449,19 +473,27 @@ class CreditSystemApp:
         logout_button.pack(pady=(5, 10))
 
     def view_all_applications(self):
+        self.clear_screen()  # Clear previous widgets
+
         conn = sqlite3.connect('credit_system.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM applications")
+        cursor.execute("SELECT applications.id, clients.full_name, applications.credit_sum, applications.credit_term, applications.status FROM applications "
+                       "JOIN clients ON applications.client_id = clients.id")
         applications = cursor.fetchall()
         conn.close()
 
         if applications:
-            applications_window = tk.Toplevel(self.root)
-            applications_window.title("Все заявки")
-            applications_window.geometry("800x400")
+            title = tk.Label(
+                self.root,
+                text="Все заявки",
+                font=("Helvetica", 24, "bold"),
+                bg='#2c3e50',
+                fg='white'
+            )
+            title.pack(pady=20)
 
-            frame = tk.Frame(applications_window)
-            frame.pack(fill=tk.BOTH, expand=True)
+            frame = tk.Frame(self.root, bg='#2c3e50')
+            frame.pack(expand=True)
 
             scrollbar = tk.Scrollbar(frame)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -477,11 +509,11 @@ class CreditSystemApp:
             tree.heading("Статус", text="Статус")
 
             for app in applications:
-                tree.insert("", tk.END, values=app[1:])
+                tree.insert("", tk.END, values=app)
 
             tree.pack(expand=True, fill=tk.BOTH)
 
-            button_frame = tk.Frame(applications_window)
+            button_frame = tk.Frame(self.root, bg='#2c3e50')
             button_frame.pack(pady=10)
 
             status_label = tk.Label(button_frame, text="Статус:", bg='white')
@@ -504,11 +536,11 @@ class CreditSystemApp:
             back_button = tk.Button(
                 button_frame,
                 text="Назад",
-                command=applications_window.destroy,
+                command=self.show_admin_dashboard,
                 bg='grey',
                 fg='white'
             )
-            back_button.pack(side=tk.LEFT, padx=(5, 0))
+            back_button.pack(side=tk.LEFT)
 
         else:
             messagebox.showinfo("Информация", "Нет заявок для отображения.")
@@ -527,21 +559,29 @@ class CreditSystemApp:
         conn.close()
 
         messagebox.showinfo("Успех", "Статус заявки изменен!")
-        self.view_all_applications()
+        self.view_all_applications()  # Обновляем список заявок
 
     def search_applications(self, query):
         conn = sqlite3.connect('credit_system.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM applications WHERE full_name LIKE ?", ('%' + query + '%',))
+        cursor.execute("SELECT applications.id, clients.full_name, applications.credit_sum, applications.credit_term, applications.status FROM applications "
+                       "JOIN clients ON applications.client_id = clients.id WHERE clients.full_name LIKE ?", ('%' + query + '%',))
         applications = cursor.fetchall()
         conn.close()
 
         if applications:
-            applications_window = tk.Toplevel(self.root)
-            applications_window.title("Результаты поиска")
-            applications_window.geometry("800x400")
+            self.clear_screen()
 
-            frame = tk.Frame(applications_window)
+            title = tk.Label(
+                self.root,
+                text="Результаты поиска",
+                font=("Helvetica", 24, "bold"),
+                bg='#2c3e50',
+                fg='white'
+            )
+            title.pack(pady=20)
+
+            frame = tk.Frame(self.root)
             frame.pack(fill=tk.BOTH, expand=True)
 
             scrollbar = tk.Scrollbar(frame)
@@ -558,17 +598,17 @@ class CreditSystemApp:
             tree.heading("Статус", text="Статус")
 
             for app in applications:
-                tree.insert("", tk.END, values=app[1:])
+                tree.insert("", tk.END, values=app)
 
             tree.pack(expand=True, fill=tk.BOTH)
 
-            button_frame = tk.Frame(applications_window)
+            button_frame = tk.Frame(self.root)
             button_frame.pack(pady=10)
 
             back_button = tk.Button(
                 button_frame,
                 text="Назад",
-                command=applications_window.destroy,
+                command=self.show_admin_dashboard,
                 bg='grey',
                 fg='white'
             )
@@ -694,11 +734,24 @@ class CreditSystemApp:
             tree.heading("Срок кредита", text="Срок кредита")
             tree.heading("Статус", text="Статус")
             for app in applications:
-                tree.insert("", tk.END, values=app[1:])
+                tree.insert("", tk.END, values=(app[0], app[3], app[4], app[5], app[6]))
             tree.pack(expand=True, fill=tk.BOTH)
 
             button_frame = tk.Frame(self.root, bg='#2c3e50')
             button_frame.pack(pady=10)
+
+            cancel_button = tk.Button(
+                button_frame,
+                text="Отменить заявку",
+                command=lambda: self.cancel_application(app[0], client),  # добавьте правильный ID
+                width=15,
+                padx=5,
+                pady=5,
+                font=("Helvetica", 10),
+                bg='red',
+                fg='white'
+            )
+            cancel_button.pack(side=tk.LEFT)
 
             back_button = tk.Button(
                 button_frame,
@@ -715,6 +768,29 @@ class CreditSystemApp:
 
         else:
             messagebox.showinfo("Информация", "У вас нет заявок.")
+            back_button = tk.Button(
+                self.root,
+                text="Назад",
+                command=lambda: self.show_client_dashboard(client),
+                width=15,
+                padx=5,
+                pady=5,
+                font=("Helvetica", 10),
+                bg='grey',
+                fg='white'
+            )
+            back_button.pack(pady=20)
+
+    def cancel_application(self, application_id, client):
+        conn = sqlite3.connect('credit_system.db')
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM applications WHERE id = ?", (application_id,))
+        conn.commit()
+        conn.close()
+
+        messagebox.showinfo("Успех", "Заявка успешно отменена!")
+        self.show_client_applications(client)  # обновление заявок
 
     def run(self):
         self.root.mainloop()
